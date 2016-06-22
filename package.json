@@ -1,0 +1,10 @@
+{
+  "name": "js-git-browser",
+  "scripts": {
+    "build": "node browserify.js"
+  },
+  "dependencies": {
+    "browserify": "^13.0.1",
+    "js-git": "^0.7.7"
+  }
+}
