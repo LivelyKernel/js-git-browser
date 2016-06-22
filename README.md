@@ -7,6 +7,55 @@ combination with `await`).
 ## Usage
 
 ```js
+
+var modes = jsgit.modes,
+    repo = jsgit.createRepo();
+
+// -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+// initial commit
+
+var author = {name: "Robert Krahn", email: "robert.krahn@gmail.com", date: new Date()};
+
+var changes = [
+  {path: "test.txt", mode: modes.file, content: "some content"},
+  {path: "test2.txt", mode: modes.file, content: "some more content"},
+  {path: "dir/test3.txt", mode: modes.file, content: "foo bar baz"},
+];
+
+var commitHash = await commitChanges(changes, author, "test")
+
+async function commitChanges(changes, author, message = "empty commit message", date = author.date || new Date(), parents = []) {
+  Object.assign({}, author, {date});
+  var tree = await repo.createTree(changes),
+      commitHash = await repo.saveAs("commit", {tree, author, message, parents});
+  return repo.updateRef("refs/heads/master", commitHash);
+}
+
+// -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+// load commit
+
+await loadFilesFromCommit(commitHash)
+
+async function loadFilesFromCommit(commitHash, readAs) {
+  var {tree} = await repo.loadAs("commit", commitHash)  
+  return loadFilesFromTree(tree, readAs);
+}
+
+async function loadFilesFromTree(treeHash, readAs = "text") {
+  // readAs = "text"|"blob"
+  var textObjs = [], reader = await repo.treeWalk(treeHash), obj;
+  while (obj = await reader.read()) {
+    if (obj.mode !== modes.file) continue;
+    textObjs.push(Object.assign({content: await repo.loadAs(readAs, obj.hash)}, obj))
+  }
+  return textObjs;
+}
+
+```
+
+---------------------------
+
+```js
 // Create a repo by creating a plain object.
 var repo = jsgit.createRepo();
 

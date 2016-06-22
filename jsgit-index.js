@@ -34,6 +34,29 @@ mixins.readCombiner = require('js-git/mixins/read-combiner');
 mixins.formats = require('js-git/mixins/formats');
 
 
+function popCallbackFromArgs(args) {
+  var maybeCallback = args[args.length-1];
+  var hasCallback = typeof maybeCallback === "function";
+  if (hasCallback) args.pop();
+  return hasCallback ? maybeCallback : null;
+}
+
+function makePromise(object, methodName) {
+  var wrapped = object[methodName];
+  // convert repo callback-style functions into promise producers
+  object[methodName] = function() {
+    var args = []; for (var i = 0; i < arguments.length; i++) args.push(arguments[i]);
+    var maybeCallback = popCallbackFromArgs(args);
+    return new Promise((resolve, reject) => {
+      args.push((err, result) => {
+        if (maybeCallback) maybeCallback(err, result);
+        err ? reject(err) : resolve(result)
+      })
+      return wrapped.apply(object, args);
+    });
+  };
+  object[methodName].toString = () => wrapped.toString();
+}
 
 function createRepo() {
   var repo = {};
@@ -44,24 +67,24 @@ function createRepo() {
   mixins.readCombiner(repo);
   mixins.formats(repo);
   Object.keys(repo).forEach(name => {
-    if (typeof repo[name] !== "function") return;
-    var wrapped = repo[name];
-    // convert repo callback-style functions into promise producers
-    repo[name] = function() {
-      var args = [].slice.call(arguments);
-      return new Promise((resolve, reject) => {
-        var maybeCallback = args[args.length-1];
-        var hasCallback = typeof maybeCallback === "function";
-        if (hasCallback) args.pop();
-        args.push((err, result) => {
-          if (hasCallback) maybeCallback(err, result);
-          err ? reject(err) : resolve(result)
-        })
-        return wrapped.apply(repo, args);
-      });
-    };
-    // repo[name].toString = () => wrapped.toString();
+    if (typeof repo[name] === "function") makePromise(repo, name);
   });
+  var realLogWalk = repo.logWalk;
+  repo.logWalk = function (ref, callback) {
+    var args = []; for (var i = 0; i < arguments.length; i++) args.push(arguments[i]);
+    return realLogWalk.apply(repo, args).then(walk => {
+      if (walk.read) makePromise(walk, "read");
+      return walk;
+    });
+  }
+  var realTreeWalk = repo.treeWalk;
+  repo.treeWalk = function(ref, callback) {
+    var args = []; for (var i = 0; i < arguments.length; i++) args.push(arguments[i]);
+    return realTreeWalk.apply(repo, args).then(walk => {
+      if (walk.read) makePromise(walk, "read");
+      return walk;
+    });
+  }
   return repo;
 }
 
