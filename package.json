@@ -1,10 +1,21 @@
 {
   "name": "js-git-browser",
+  "main": "jsgit.js",
+  "systemjs": {
+    "main": "./jsgit.js",
+    "map": {
+      "js-git-browser": "."
+    }
+  },
+  "lively": {
+    "main": "jsgit.js"
+  },
   "scripts": {
     "build": "node browserify.js"
   },
-  "dependencies": {
+  "devDependencies": {
     "browserify": "^13.0.1",
-    "js-git": "^0.7.7"
+    "js-git": "^0.7.7",
+    "js-github": "^1.0.0"
   }
 }

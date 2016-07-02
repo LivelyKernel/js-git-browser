@@ -34,6 +34,20 @@ mixins.readCombiner = require('js-git/mixins/read-combiner');
 // This makes the object interface less strict.  See it's docs for details
 mixins.formats = require('js-git/mixins/formats');
 
+// Sync local with remote repository
+mixins.sync = require('js-git/mixins/sync');
+
+// Use local as cache for remote repository
+mixins.fallthrough = require('js-git/mixins/fall-through');
+
+// use github as database
+mixins.github = require('js-github/mixins/github-db');
+
+// use IndexedDB as database
+mixins.indexed = require('js-git/mixins/indexed-db');
+
+// Cache everything except blobs over 100 bytes in memory.
+mixins.memCache = require('js-git/mixins/mem-cache');
 
 function popCallbackFromArgs(args) {
   var maybeCallback = args[args.length-1];
@@ -67,13 +81,16 @@ function createRepo() {
   mixins.walkers(repo);
   mixins.readCombiner(repo);
   mixins.formats(repo);
+  return promisify(repo);
+}
+
+function promisify(repo) {
   Object.keys(repo).forEach(name => {
     if (typeof repo[name] === "function") makePromise(repo, name);
   });
   var realLogWalk = repo.logWalk;
   repo.logWalk = function (ref, callback) {
     var args = []; for (var i = 0; i < arguments.length; i++) args.push(arguments[i]);
-    var maybeCallback = popCallbackFromArgs(args);
     return realLogWalk.apply(repo, args).then(walk => {
       if (walk.read) makePromise(walk, "read");
       return walk;
@@ -87,15 +104,16 @@ function createRepo() {
       return walk;
     });
   }
-  return repo;
 }
 
 module.exports = {
   modes: modes,
+  mixins: mixins,
+  promisify: promisify,
   createRepo: createRepo
 }
 
-},{"js-git/lib/modes":8,"js-git/mixins/create-tree":11,"js-git/mixins/formats":12,"js-git/mixins/mem-db":13,"js-git/mixins/pack-ops":14,"js-git/mixins/read-combiner":15,"js-git/mixins/walkers":16}],2:[function(require,module,exports){
+},{"js-git/lib/modes":8,"js-git/mixins/create-tree":11,"js-git/mixins/fall-through":12,"js-git/mixins/formats":13,"js-git/mixins/indexed-db":14,"js-git/mixins/mem-cache":15,"js-git/mixins/mem-db":16,"js-git/mixins/pack-ops":17,"js-git/mixins/read-combiner":18,"js-git/mixins/sync":19,"js-git/mixins/walkers":20,"js-github/mixins/github-db":41}],2:[function(require,module,exports){
 // shim for using process in browser
 
 var process = module.exports = {};
@@ -279,7 +297,7 @@ function applyDelta(delta, base) {
   }
 }
 
-},{"bodec":17}],4:[function(require,module,exports){
+},{"bodec":21}],4:[function(require,module,exports){
 (function (process){
 "use strict";
 
@@ -328,7 +346,7 @@ else {
   };
 }
 
-},{"bodec":17,"pako":20}],6:[function(require,module,exports){
+},{"bodec":21,"pako":24}],6:[function(require,module,exports){
 var Inflate = require('pako').Inflate;
 var Binary = require('bodec').Binary;
 
@@ -366,7 +384,7 @@ module.exports = function inflateStream() {
   }
 };
 
-},{"bodec":17,"pako":20}],7:[function(require,module,exports){
+},{"bodec":21,"pako":24}],7:[function(require,module,exports){
 var pako = require('pako');
 var Binary = require('bodec').Binary;
 if (Binary === Uint8Array) {
@@ -378,7 +396,7 @@ else {
   };
 }
 
-},{"bodec":17,"pako":20}],8:[function(require,module,exports){
+},{"bodec":21,"pako":24}],8:[function(require,module,exports){
 // Not strict mode because it uses octal literals all over.
 module.exports = {
   isBlob: function (mode) {
@@ -668,7 +686,7 @@ function parseDec(buffer, start, end) {
   return val;
 }
 
-},{"./modes":8,"bodec":17}],10:[function(require,module,exports){
+},{"./modes":8,"bodec":21}],10:[function(require,module,exports){
 var inflateStream = require('./inflate-stream.js');
 var inflate = require('./inflate.js');
 var deflate = require('./deflate.js');
@@ -996,7 +1014,7 @@ function packFrame(item) {
   return bodec.join(parts);
 }
 
-},{"./deflate.js":5,"./inflate-stream.js":6,"./inflate.js":7,"bodec":17,"git-sha1":19}],11:[function(require,module,exports){
+},{"./deflate.js":5,"./inflate-stream.js":6,"./inflate.js":7,"bodec":21,"git-sha1":23}],11:[function(require,module,exports){
 "use strict";
 
 var modes = require('../lib/modes.js');
@@ -1147,6 +1165,34 @@ function singleCall(callback) {
 }
 
 },{"../lib/modes.js":8}],12:[function(require,module,exports){
+var modes = require('../lib/modes');
+
+module.exports = function (local, remote) {
+  var loadAs = local.loadAs;
+  local.loadAs = newLoadAs;
+  function newLoadAs(type, hash, callback) {
+    if (!callback) return newLoadAs.bind(local. type, hash);
+    loadAs.call(local, type, hash, function (err, body) {
+      if (err) return callback(err);
+      if (body === undefined) return remote.loadAs(type, hash, callback);
+      callback(null, body);
+    });
+  }
+
+  var readRef = local.readRef;
+  local.readRef = newReadRef;
+  function newReadRef(ref, callback) {
+    if (!callback) return newReadRef.bind(local. ref);
+    readRef.call(local, ref, function (err, body) {
+      if (err) return callback(err);
+      if (body === undefined) return remote.readRef(ref, callback);
+      callback(null, body);
+    });
+  }
+
+};
+
+},{"../lib/modes":8}],13:[function(require,module,exports){
 "use strict";
 
 var bodec = require('bodec');
@@ -1281,7 +1327,211 @@ function normalizePerson(person) {
   };
 }
 
-},{"../lib/object-codec":9,"bodec":17}],13:[function(require,module,exports){
+},{"../lib/object-codec":9,"bodec":21}],14:[function(require,module,exports){
+"use strict";
+/*global indexedDB*/
+
+var codec = require('../lib/object-codec.js');
+var sha1 = require('git-sha1');
+var modes = require('../lib/modes.js');
+var db;
+
+mixin.init = init;
+
+mixin.loadAs = loadAs;
+mixin.saveAs = saveAs;
+module.exports = mixin;
+
+function init(callback) {
+
+  db = null;
+  var request = indexedDB.open("tedit", 1);
+
+  // We can only create Object stores in a versionchange transaction.
+  request.onupgradeneeded = function(evt) {
+    var db = evt.target.result;
+
+    if (evt.dataLoss && evt.dataLoss !== "none") {
+      return callback(new Error(evt.dataLoss + ": " + evt.dataLossMessage));
+    }
+
+    // A versionchange transaction is started automatically.
+    evt.target.transaction.onerror = onError;
+
+    if(db.objectStoreNames.contains("objects")) {
+      db.deleteObjectStore("objects");
+    }
+    if(db.objectStoreNames.contains("refs")) {
+      db.deleteObjectStore("refs");
+    }
+
+    db.createObjectStore("objects", {keyPath: "hash"});
+    db.createObjectStore("refs", {keyPath: "path"});
+  };
+
+  request.onsuccess = function (evt) {
+    db = evt.target.result;
+    callback();
+  };
+  request.onerror = onError;
+}
+
+
+function mixin(repo, prefix) {
+  if (!prefix) throw new Error("Prefix required");
+  repo.refPrefix = prefix;
+  repo.saveAs = saveAs;
+  repo.loadAs = loadAs;
+  repo.readRef = readRef;
+  repo.updateRef = updateRef;
+  repo.hasHash = hasHash;
+}
+
+function onError(evt) {
+  console.error("error", evt.target.error);
+}
+
+function saveAs(type, body, callback, forcedHash) {
+  if (!callback) return saveAs.bind(this, type, body);
+  var hash;
+  try {
+    var buffer = codec.frame({type:type,body:body});
+    hash = forcedHash || sha1(buffer);
+  }
+  catch (err) { return callback(err); }
+  var trans = db.transaction(["objects"], "readwrite");
+  var store = trans.objectStore("objects");
+  var entry = { hash: hash, type: type, body: body };
+  var request = store.put(entry);
+  request.onsuccess = function() {
+    // console.warn("SAVE", type, hash);
+    callback(null, hash, body);
+  };
+  request.onerror = function(evt) {
+    callback(new Error(evt.value));
+  };
+}
+
+function loadAs(type, hash, callback) {
+  if (!callback) return loadAs.bind(this, type, hash);
+  loadRaw(hash, function (err, entry) {
+    if (!entry) return callback(err);
+    if (type !== entry.type) {
+      return callback(new TypeError("Type mismatch"));
+    }
+    callback(null, entry.body, hash);
+  });
+}
+
+function loadRaw(hash, callback) {
+  var trans = db.transaction(["objects"], "readwrite");
+  var store = trans.objectStore("objects");
+  var request = store.get(hash);
+  request.onsuccess = function(evt) {
+    var entry = evt.target.result;
+    if (!entry) return callback();
+    return callback(null, entry);
+  };
+  request.onerror = function(evt) {
+    callback(new Error(evt.value));
+  };
+}
+
+function hasHash(hash, callback) {
+  if (!callback) return hasHash.bind(this, hash);
+  loadRaw(hash, function (err, body) {
+    if (err) return callback(err);
+    return callback(null, !!body);
+  });
+}
+
+function readRef(ref, callback) {
+  if (!callback) return readRef.bind(this, ref);
+  var key = this.refPrefix + "/" + ref;
+  var trans = db.transaction(["refs"], "readwrite");
+  var store = trans.objectStore("refs");
+  var request = store.get(key);
+  request.onsuccess = function(evt) {
+    var entry = evt.target.result;
+    if (!entry) return callback();
+    callback(null, entry.hash);
+  };
+  request.onerror = function(evt) {
+    callback(new Error(evt.value));
+  };
+}
+
+function updateRef(ref, hash, callback) {
+  if (!callback) return updateRef.bind(this, ref, hash);
+  var key = this.refPrefix + "/" + ref;
+  var trans = db.transaction(["refs"], "readwrite");
+  var store = trans.objectStore("refs");
+  var entry = { path: key, hash: hash };
+  var request = store.put(entry);
+  request.onsuccess = function() {
+    callback();
+  };
+  request.onerror = function(evt) {
+    callback(new Error(evt.value));
+  };
+}
+
+},{"../lib/modes.js":8,"../lib/object-codec.js":9,"git-sha1":23}],15:[function(require,module,exports){
+"use strict";
+
+var encoders = require('../lib/object-codec').encoders;
+var decoders = require('../lib/object-codec').decoders;
+var Binary = require('bodec').Binary;
+
+var cache = memCache.cache = {};
+module.exports = memCache;
+
+function memCache(repo) {
+  var loadAs = repo.loadAs;
+  repo.loadAs = loadAsCached;
+  function loadAsCached(type, hash, callback) {
+    if (!callback) return loadAsCached.bind(this, type, hash);
+    if (hash in cache) return callback(null, dupe(type, cache[hash]), hash);
+    loadAs.call(repo, type, hash, function (err, value) {
+      if (value === undefined) return callback(err);
+      if (type !== "blob" || value.length < 100) {
+        cache[hash] = dupe(type, value);
+      }
+      return callback.apply(this, arguments);
+    });
+  }
+
+  var saveAs = repo.saveAs;
+  repo.saveAs = saveAsCached;
+  function saveAsCached(type, value, callback) {
+    if (!callback) return saveAsCached.bind(this, type, value);
+    value = dupe(type, value);
+    saveAs.call(repo, type, value, function (err, hash) {
+      if (err) return callback(err);
+      if (type !== "blob" || value.length < 100) {
+        cache[hash] = value;
+      }
+      return callback(null, hash, value);
+    });
+  }
+}
+function dupe(type, value) {
+  if (type === "blob") {
+    if (type.length >= 100) return value;
+    return new Binary(value);
+  }
+  return decoders[type](encoders[type](value));
+}
+
+function deepFreeze(obj) {
+  Object.freeze(obj);
+  Object.keys(obj).forEach(function (key) {
+    var value = obj[key];
+    if (typeof value === "object") deepFreeze(value);
+  });
+}
+
+},{"../lib/object-codec":9,"bodec":21}],16:[function(require,module,exports){
 "use strict";
 
 var defer = require('../lib/defer.js');
@@ -1378,7 +1628,7 @@ function makeAsync(fn, callback) {
   });
 }
 
-},{"../lib/defer.js":4,"../lib/object-codec.js":9,"git-sha1":19}],14:[function(require,module,exports){
+},{"../lib/defer.js":4,"../lib/object-codec.js":9,"git-sha1":23}],17:[function(require,module,exports){
 "use strict";
 
 var sha1 = require('git-sha1');
@@ -1581,7 +1831,7 @@ function applyParser(stream, parser, onError) {
   return { take: extra.take };
 }
 
-},{"../lib/apply-delta.js":3,"../lib/object-codec.js":9,"../lib/pack-codec.js":10,"culvert":18,"git-sha1":19}],15:[function(require,module,exports){
+},{"../lib/apply-delta.js":3,"../lib/object-codec.js":9,"../lib/pack-codec.js":10,"culvert":22,"git-sha1":23}],18:[function(require,module,exports){
 "use strict";
 
 // This replaces loadAs with a version that batches concurrent requests for
@@ -1611,7 +1861,156 @@ module.exports = function (repo) {
   }
 };
 
-},{}],16:[function(require,module,exports){
+},{}],19:[function(require,module,exports){
+"use strict";
+
+var modes = require('../lib/modes');
+
+module.exports = function (local, remote) {
+  local.fetch = fetch;
+  local.send = send;
+  local.readRemoteRef = remote.readRef.bind(remote);
+  local.updateRemoteRef = remote.updateRef.bind(remote);
+
+  function fetch(ref, depth, callback) {
+    if (!callback) return fetch.bind(local, ref, depth);
+    sync(local, remote, ref, depth, callback);
+  }
+
+  function send(ref, callback) {
+    if (!callback) return send.bind(local, ref);
+    sync(remote, local, ref, Infinity, callback);
+  }
+};
+
+// Download remote ref with depth
+// Make sure to use Infinity for depth on github mounts or anything that
+// doesn't allow shallow clones.
+function sync(local, remote, ref, depth, callback) {
+  if (typeof ref !== "string") throw new TypeError("ref must be string");
+  if (typeof depth !== "number") throw new TypeError("depth must be number");
+
+  var hasCache = {};
+
+  remote.readRef(ref, function (err, hash) {
+    if (!hash) return callback(err);
+    importCommit(hash, depth, function (err) {
+      if (err) return callback(err);
+      callback(null, hash);
+    });
+  });
+
+  // Caching has check.
+  function check(type, hash, callback) {
+    if (typeof type !== "string") throw new TypeError("type must be string");
+    if (typeof hash !== "string") throw new TypeError("hash must be string");
+    if (hasCache[hash]) return callback(null, true);
+    local.hasHash(hash, function (err, has) {
+      if (err) return callback(err);
+      hasCache[hash] = has;
+      callback(null, has);
+    });
+  }
+
+  function importCommit(hash, depth, callback) {
+    check("commit", hash, onCheck);
+
+    function onCheck(err, has) {
+      if (err || has) return callback(err);
+      remote.loadAs("commit", hash, onLoad);
+    }
+
+    function onLoad(err, commit) {
+      if (!commit) return callback(err || new Error("Missing commit " + hash));
+      var i = 0;
+      importTree(commit.tree, onImport);
+
+      function onImport(err) {
+        if (err) return callback(err);
+        if (i >= commit.parents.length || depth <= 1) {
+          return local.saveAs("commit", commit, onSave);
+        }
+        importCommit(commit.parents[i++], depth - 1, onImport);
+      }
+    }
+
+    function onSave(err, newHash) {
+      if (err) return callback(err);
+      if (newHash !== hash) {
+        return callback(new Error("Commit hash mismatch " + hash + " != " + newHash));
+      }
+      hasCache[hash] = true;
+      callback();
+    }
+  }
+
+  function importTree(hash, callback) {
+    check("tree", hash, onCheck);
+
+    function onCheck(err, has) {
+      if (err || has) return callback(err);
+      remote.loadAs("tree", hash, onLoad);
+    }
+
+    function onLoad(err, tree) {
+      if (!tree) return callback(err || new Error("Missing tree " + hash));
+      var i = 0;
+      var names = Object.keys(tree);
+      onImport();
+
+      function onImport(err) {
+        if (err) return callback(err);
+        if (i >= names.length) {
+          return local.saveAs("tree", tree, onSave);
+        }
+        var name = names[i++];
+        var entry = tree[name];
+        if (modes.isBlob(entry.mode)) {
+          return importBlob(entry.hash, onImport);
+        }
+        if (entry.mode === modes.tree) {
+          return importTree(entry.hash, onImport);
+        }
+        // Skip others.
+        onImport();
+      }
+    }
+
+    function onSave(err, newHash) {
+      if (err) return callback(err);
+      if (newHash !== hash) {
+        return callback(new Error("Tree hash mismatch " + hash + " != " + newHash));
+      }
+      hasCache[hash] = true;
+      callback();
+    }
+  }
+
+  function importBlob(hash, callback) {
+    check("blob", hash, onCheck);
+
+    function onCheck(err, has) {
+      if (err || has) return callback(err);
+      remote.loadAs("blob", hash, onLoad);
+    }
+
+    function onLoad(err, blob) {
+      if (!blob) return callback(err || new Error("Missing blob " + hash));
+      local.saveAs("blob", blob, onSave);
+    }
+
+    function onSave(err, newHash) {
+      if (err) return callback(err);
+      if (newHash !== hash) {
+        return callback(new Error("Blob hash mismatch " + hash + " != " + newHash));
+      }
+      hasCache[hash] = true;
+      callback();
+    }
+  }
+}
+
+},{"../lib/modes":8}],20:[function(require,module,exports){
 var modes = require('../lib/modes.js');
 
 module.exports = function (repo) {
@@ -1765,7 +2164,7 @@ function walk(seed, scan, loadKey, compare) {
   }
 }
 
-},{"../lib/modes.js":8}],17:[function(require,module,exports){
+},{"../lib/modes.js":8}],21:[function(require,module,exports){
 (function (process){
 "use strict";
 /*global escape, unescape*/
@@ -2015,7 +2414,7 @@ function fromArray(array, binary, offset) {
 }
 
 }).call(this,require('_process'))
-},{"_process":2}],18:[function(require,module,exports){
+},{"_process":2}],22:[function(require,module,exports){
 "use strict";
 
 module.exports = makeChannel;
@@ -2084,7 +2483,7 @@ function log(name) {
   };
 }
 
-},{}],19:[function(require,module,exports){
+},{}],23:[function(require,module,exports){
 (function (process){
 "use strict";
 
@@ -2268,7 +2667,7 @@ function createJs(sync) {
 }
 
 }).call(this,require('_process'))
-},{"_process":2}],20:[function(require,module,exports){
+},{"_process":2}],24:[function(require,module,exports){
 // Top level file is just a mixin of submodules & constants
 'use strict';
 
@@ -2284,7 +2683,7 @@ assign(pako, deflate, inflate, constants);
 
 module.exports = pako;
 
-},{"./lib/deflate":21,"./lib/inflate":22,"./lib/utils/common":23,"./lib/zlib/constants":26}],21:[function(require,module,exports){
+},{"./lib/deflate":25,"./lib/inflate":26,"./lib/utils/common":27,"./lib/zlib/constants":30}],25:[function(require,module,exports){
 'use strict';
 
 
@@ -2662,7 +3061,7 @@ exports.deflate = deflate;
 exports.deflateRaw = deflateRaw;
 exports.gzip = gzip;
 
-},{"./utils/common":23,"./utils/strings":24,"./zlib/deflate.js":28,"./zlib/messages":33,"./zlib/zstream":35}],22:[function(require,module,exports){
+},{"./utils/common":27,"./utils/strings":28,"./zlib/deflate.js":32,"./zlib/messages":37,"./zlib/zstream":39}],26:[function(require,module,exports){
 'use strict';
 
 
@@ -3064,7 +3463,7 @@ exports.inflate = inflate;
 exports.inflateRaw = inflateRaw;
 exports.ungzip  = inflate;
 
-},{"./utils/common":23,"./utils/strings":24,"./zlib/constants":26,"./zlib/gzheader":29,"./zlib/inflate.js":31,"./zlib/messages":33,"./zlib/zstream":35}],23:[function(require,module,exports){
+},{"./utils/common":27,"./utils/strings":28,"./zlib/constants":30,"./zlib/gzheader":33,"./zlib/inflate.js":35,"./zlib/messages":37,"./zlib/zstream":39}],27:[function(require,module,exports){
 'use strict';
 
 
@@ -3168,7 +3567,7 @@ exports.setTyped = function (on) {
 
 exports.setTyped(TYPED_OK);
 
-},{}],24:[function(require,module,exports){
+},{}],28:[function(require,module,exports){
 // String encode/decode helpers
 'use strict';
 
@@ -3355,7 +3754,7 @@ exports.utf8border = function(buf, max) {
   return (pos + _utf8len[buf[pos]] > max) ? pos : max;
 };
 
-},{"./common":23}],25:[function(require,module,exports){
+},{"./common":27}],29:[function(require,module,exports){
 'use strict';
 
 // Note: adler32 takes 12% for level 0 and 2% for level 6.
@@ -3389,7 +3788,7 @@ function adler32(adler, buf, len, pos) {
 
 module.exports = adler32;
 
-},{}],26:[function(require,module,exports){
+},{}],30:[function(require,module,exports){
 module.exports = {
 
   /* Allowed flush values; see deflate() and inflate() below for details */
@@ -3438,7 +3837,7 @@ module.exports = {
   //Z_NULL:                 null // Use -1 or null inline, depending on var type
 };
 
-},{}],27:[function(require,module,exports){
+},{}],31:[function(require,module,exports){
 'use strict';
 
 // Note: we can't get significant speed boost here.
@@ -3481,7 +3880,7 @@ function crc32(crc, buf, len, pos) {
 
 module.exports = crc32;
 
-},{}],28:[function(require,module,exports){
+},{}],32:[function(require,module,exports){
 'use strict';
 
 var utils   = require('../utils/common');
@@ -5248,7 +5647,7 @@ exports.deflatePrime = deflatePrime;
 exports.deflateTune = deflateTune;
 */
 
-},{"../utils/common":23,"./adler32":25,"./crc32":27,"./messages":33,"./trees":34}],29:[function(require,module,exports){
+},{"../utils/common":27,"./adler32":29,"./crc32":31,"./messages":37,"./trees":38}],33:[function(require,module,exports){
 'use strict';
 
 
@@ -5290,7 +5689,7 @@ function GZheader() {
 
 module.exports = GZheader;
 
-},{}],30:[function(require,module,exports){
+},{}],34:[function(require,module,exports){
 'use strict';
 
 // See state defs from inflate.js
@@ -5618,7 +6017,7 @@ module.exports = function inflate_fast(strm, start) {
   return;
 };
 
-},{}],31:[function(require,module,exports){
+},{}],35:[function(require,module,exports){
 'use strict';
 
 
@@ -7123,7 +7522,7 @@ exports.inflateSyncPoint = inflateSyncPoint;
 exports.inflateUndermine = inflateUndermine;
 */
 
-},{"../utils/common":23,"./adler32":25,"./crc32":27,"./inffast":30,"./inftrees":32}],32:[function(require,module,exports){
+},{"../utils/common":27,"./adler32":29,"./crc32":31,"./inffast":34,"./inftrees":36}],36:[function(require,module,exports){
 'use strict';
 
 
@@ -7452,7 +7851,7 @@ module.exports = function inflate_table(type, lens, lens_index, codes, table, ta
   return 0;
 };
 
-},{"../utils/common":23}],33:[function(require,module,exports){
+},{"../utils/common":27}],37:[function(require,module,exports){
 'use strict';
 
 module.exports = {
@@ -7467,7 +7866,7 @@ module.exports = {
   '-6':   'incompatible version' /* Z_VERSION_ERROR (-6) */
 };
 
-},{}],34:[function(require,module,exports){
+},{}],38:[function(require,module,exports){
 'use strict';
 
 
@@ -8668,7 +9067,7 @@ exports._tr_flush_block  = _tr_flush_block;
 exports._tr_tally = _tr_tally;
 exports._tr_align = _tr_align;
 
-},{"../utils/common":23}],35:[function(require,module,exports){
+},{"../utils/common":27}],39:[function(require,module,exports){
 'use strict';
 
 
@@ -8699,5 +9098,626 @@ function ZStream() {
 
 module.exports = ZStream;
 
-},{}]},{},[1])(1)
+},{}],40:[function(require,module,exports){
+(function (process){
+"use strict";
+
+var isNode = typeof process === 'object' &&
+             typeof process.versions === 'object' &&
+             process.versions.node &&
+             process.__atom_type !== "renderer";
+
+// Node.js https module
+if (isNode) {
+  var nodeRequire = require; // Prevent mine.js from seeing this require
+  module.exports = nodeRequire('./xhr-node.js');
+}
+
+// Browser XHR
+else {
+  module.exports = function (root, accessToken) {
+    var timeout = 2000;
+    return request;
+
+    function request(method, url, body, callback) {
+      if (typeof body === "function") {
+        callback = body;
+        body = undefined;
+      }
+      else if (!callback) return request.bind(null, method, url, body);
+      url = url.replace(":root", root);
+      var done = false;
+      var json;
+      var xhr = new XMLHttpRequest();
+      xhr.timeout = timeout;
+      xhr.open(method, 'https://api.github.com' + url, true);
+      xhr.setRequestHeader("Authorization", "token " + accessToken);
+      if (body) {
+        try { json = JSON.stringify(body); }
+        catch (err) { return callback(err); }
+      }
+      xhr.ontimeout = onTimeout;
+      xhr.onerror = function() {
+        callback(new Error("Error requesting " + url));
+      };
+      xhr.onreadystatechange = onReadyStateChange;
+      xhr.send(json);
+
+      function onReadyStateChange() {
+        if (done) return;
+        if (xhr.readyState !== 4) return;
+        // Give onTimeout a chance to run first if that's the reason status is 0.
+        if (!xhr.status) return setTimeout(onReadyStateChange, 0);
+        done = true;
+        var response = {message:xhr.responseText};
+        if (xhr.responseText){
+          try { response = JSON.parse(xhr.responseText); }
+          catch (err) {}
+        }
+        xhr.body = response;
+        return callback(null, xhr, response);
+      }
+
+      function onTimeout() {
+        if (done) return;
+        if (timeout < 8000) {
+          timeout *= 2;
+          return request(method, url, body, callback);
+        }
+        done = true;
+        callback(new Error("Timeout requesting " + url));
+      }
+    }
+  };
+}
+
+}).call(this,require('_process'))
+},{"_process":2}],41:[function(require,module,exports){
+"use strict";
+
+var modes = require('js-git/lib/modes');
+var xhr = require('../lib/xhr');
+var bodec = require('bodec');
+var sha1 = require('git-sha1');
+var frame = require('js-git/lib/object-codec').frame;
+
+var modeToType = {
+  "040000": "tree",
+  "100644": "blob",  // normal file
+  "100755": "blob",  // executable file
+  "120000": "blob",  // symlink
+  "160000": "commit" // gitlink
+};
+
+var encoders = {
+  commit: encodeCommit,
+  tag: encodeTag,
+  tree: encodeTree,
+  blob: encodeBlob
+};
+
+var decoders = {
+  commit: decodeCommit,
+  tag: decodeTag,
+  tree: decodeTree,
+  blob: decodeBlob,
+};
+
+var typeCache = {};
+
+// Precompute hashes for empty blob and empty tree since github won't
+var empty = bodec.create(0);
+var emptyBlob = sha1(frame({ type: "blob", body: empty }));
+var emptyTree = sha1(frame({ type: "tree", body: empty }));
+
+// Implement the js-git object interface using github APIs
+module.exports = function (repo, root, accessToken) {
+
+  var apiRequest = xhr(root, accessToken);
+
+  repo.loadAs = loadAs;         // (type, hash) -> value, hash
+  repo.saveAs = saveAs;         // (type, value) -> hash, value
+  repo.readRef = readRef;       // (ref) -> hash
+  repo.updateRef = updateRef;   // (ref, hash) -> hash
+  repo.createTree = createTree; // (entries) -> hash, tree
+  repo.hasHash = hasHash;
+
+  function loadAs(type, hash, callback) {
+    if (!callback) return loadAs.bind(repo, type, hash);
+    // Github doesn't like empty trees, but we know them already.
+    if (type === "tree" && hash === emptyTree) return callback(null, {}, hash);
+    apiRequest("GET", "/repos/:root/git/" + type + "s/" + hash, onValue);
+
+    function onValue(err, xhr, result) {
+      if (err) return callback(err);
+      if (xhr.status < 200 || xhr.status >= 500) {
+        return callback(new Error("Invalid HTTP response: " + xhr.statusCode + " " + result.message));
+      }
+      if (xhr.status >= 300 && xhr.status < 500) return callback();
+      var body;
+      try { body = decoders[type].call(repo, result); }
+      catch (err) { return callback(err); }
+      if (hashAs(type, body) !== hash) {
+        if (fixDate(type, body, hash)) console.log(type + " repaired", hash);
+        else console.warn("Unable to repair " + type, hash);
+      }
+      typeCache[hash] = type;
+      return callback(null, body, hash);
+    }
+  }
+
+  function hasHash(hash, callback) {
+    if (!callback) return hasHash.bind(repo, hash);
+    var type = typeCache[hash];
+    var types = type ? [type] : ["tag", "commit", "tree", "blob"];
+    start();
+    function start() {
+      type = types.pop();
+      if (!type) return callback(null, false);
+      apiRequest("GET", "/repos/:root/git/" + type + "s/" + hash, onValue);
+    }
+
+    function onValue(err, xhr, result) {
+      if (err) return callback(err);
+      if (xhr.status < 200 || xhr.status >= 500) {
+        return callback(new Error("Invalid HTTP response: " + xhr.statusCode + " " + result.message));
+      }
+      if (xhr.status >= 300 && xhr.status < 500) return start();
+      typeCache[hash] = type;
+      callback(null, true);
+    }
+  }
+
+  function saveAs(type, body, callback) {
+    if (!callback) return saveAs.bind(repo, type, body);
+    var hash;
+    try {
+      hash = hashAs(type, body);
+    }
+    catch (err) {
+      return callback(err);
+    }
+    typeCache[hash] = type;
+    repo.hasHash(hash, function (err, has) {
+      if (err) return callback(err);
+      if (has) return callback(null, hash, body);
+
+      var request;
+      try {
+        request = encoders[type](body);
+      }
+      catch (err) {
+        return callback(err);
+      }
+
+      // Github doesn't allow creating empty trees.
+      if (type === "tree" && request.tree.length === 0) {
+        return callback(null, emptyTree, body);
+      }
+      return apiRequest("POST", "/repos/:root/git/" + type + "s", request, onWrite);
+
+    });
+
+    function onWrite(err, xhr, result) {
+      if (err) return callback(err);
+      if (xhr.status < 200 || xhr.status >= 300) {
+        return callback(new Error("Invalid HTTP response: " + xhr.status + " " + result.message));
+      }
+      return callback(null, result.sha, body);
+    }
+  }
+
+  // Create a tree with optional deep paths and create new blobs.
+  // Entries is an array of {mode, path, hash|content}
+  // Also deltas can be specified by setting entries.base to the hash of a tree
+  // in delta mode, entries can be removed by specifying just {path}
+  function createTree(entries, callback) {
+    if (!callback) return createTree.bind(repo, entries);
+    var toDelete = entries.base && entries.filter(function (entry) {
+      return !entry.mode;
+    }).map(function (entry) {
+      return entry.path;
+    });
+    var toCreate = entries.filter(function (entry) {
+      return bodec.isBinary(entry.content);
+    });
+
+    if (!toCreate.length) return next();
+    var done = false;
+    var left = entries.length;
+    toCreate.forEach(function (entry) {
+      repo.saveAs("blob", entry.content, function (err, hash) {
+        if (done) return;
+        if (err) {
+          done = true;
+          return callback(err);
+        }
+        delete entry.content;
+        entry.hash = hash;
+        left--;
+        if (!left) next();
+      });
+    });
+
+    function next(err) {
+      if (err) return callback(err);
+      if (toDelete && toDelete.length) {
+        return slowUpdateTree(entries, toDelete, callback);
+      }
+      return fastUpdateTree(entries, callback);
+    }
+  }
+
+  function fastUpdateTree(entries, callback) {
+    var request = { tree: entries.map(mapTreeEntry) };
+    if (entries.base) request.base_tree = entries.base;
+
+    apiRequest("POST", "/repos/:root/git/trees", request, onWrite);
+
+    function onWrite(err, xhr, result) {
+      if (err) return callback(err);
+      if (xhr.status < 200 || xhr.status >= 300) {
+        return callback(new Error("Invalid HTTP response: " + xhr.status + " " + result.message));
+      }
+      return callback(null, result.sha, decoders.tree(result));
+    }
+  }
+
+  // Github doesn't support deleting entries via the createTree API, so we
+  // need to manually create those affected trees and modify the request.
+  function slowUpdateTree(entries, toDelete, callback) {
+    callback = singleCall(callback);
+    var root = entries.base;
+
+    var left = 0;
+
+    // Calculate trees that need to be re-built and save any provided content.
+    var parents = {};
+    toDelete.forEach(function (path) {
+      var parentPath = path.substr(0, path.lastIndexOf("/"));
+      var parent = parents[parentPath] || (parents[parentPath] = {
+        add: {}, del: []
+      });
+      var name = path.substr(path.lastIndexOf("/") + 1);
+      parent.del.push(name);
+    });
+    var other = entries.filter(function (entry) {
+      if (!entry.mode) return false;
+      var parentPath = entry.path.substr(0, entry.path.lastIndexOf("/"));
+      var parent = parents[parentPath];
+      if (!parent) return true;
+      var name = entry.path.substr(entry.path.lastIndexOf("/") + 1);
+      if (entry.hash) {
+        parent.add[name] = {
+          mode: entry.mode,
+          hash: entry.hash
+        };
+        return false;
+      }
+      left++;
+      repo.saveAs("blob", entry.content, function(err, hash) {
+        if (err) return callback(err);
+        parent.add[name] = {
+          mode: entry.mode,
+          hash: hash
+        };
+        if (!--left) onParents();
+      });
+      return false;
+    });
+    if (!left) onParents();
+
+    function onParents() {
+      Object.keys(parents).forEach(function (parentPath) {
+        left++;
+        // TODO: remove this dependency on pathToEntry
+        repo.pathToEntry(root, parentPath, function (err, entry) {
+          if (err) return callback(err);
+          var tree = entry.tree;
+          var commands = parents[parentPath];
+          commands.del.forEach(function (name) {
+            delete tree[name];
+          });
+          for (var name in commands.add) {
+            tree[name] = commands.add[name];
+          }
+          repo.saveAs("tree", tree, function (err, hash, tree) {
+            if (err) return callback(err);
+            other.push({
+              path: parentPath,
+              hash: hash,
+              mode: modes.tree
+            });
+            if (!--left) {
+              other.base = entries.base;
+              if (other.length === 1 && other[0].path === "") {
+                return callback(null, hash, tree);
+              }
+              fastUpdateTree(other, callback);
+            }
+          });
+        });
+      });
+    }
+  }
+
+
+  function readRef(ref, callback) {
+    if (!callback) return readRef.bind(repo, ref);
+    if (ref === "HEAD") ref = "refs/heads/master";
+    if (!(/^refs\//).test(ref)) {
+      return callback(new TypeError("Invalid ref: " + ref));
+    }
+    return apiRequest("GET", "/repos/:root/git/" + ref, onRef);
+
+    function onRef(err, xhr, result) {
+      if (err) return callback(err);
+      if (xhr.status === 404) return callback();
+      if (xhr.status < 200 || xhr.status >= 300) {
+        return callback(new Error("Invalid HTTP response: " + xhr.status + " " + result.message));
+      }
+      return callback(null, result.object.sha);
+    }
+  }
+
+  function updateRef(ref, hash, callback, force) {
+    if (!callback) return updateRef.bind(repo, ref, hash);
+    if (!(/^refs\//).test(ref)) {
+      return callback(new Error("Invalid ref: " + ref));
+    }
+    return apiRequest("PATCH", "/repos/:root/git/" + ref, {
+      sha: hash,
+      force: !!force
+    }, onResult);
+
+    function onResult(err, xhr, result) {
+      if (err) return callback(err);
+      if (xhr.status === 422 && result.message === "Reference does not exist") {
+        return apiRequest("POST", "/repos/:root/git/refs", {
+          ref: ref,
+          sha: hash
+        }, onResult);
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        return callback(new Error("Invalid HTTP response: " + xhr.status + " " + result.message));
+      }
+      if (err) return callback(err);
+      callback(null, hash);
+    }
+
+  }
+
+};
+
+// GitHub has a nasty habit of stripping whitespace from messages and losing
+// the timezone.  This information is required to make our hashes match up, so
+// we guess it by mutating the value till the hash matches.
+// If we're unable to match, we will just force the hash when saving to the cache.
+function fixDate(type, value, hash) {
+  if (type !== "commit" && type !== "tag") return;
+  // Add up to 3 extra newlines and try all 30-minutes timezone offsets.
+  var clone = JSON.parse(JSON.stringify(value));
+  for (var x = 0; x < 3; x++) {
+    for (var i = -720; i < 720; i += 30) {
+      if (type === "commit") {
+        clone.author.date.offset = i;
+        clone.committer.date.offset = i;
+      }
+      else if (type === "tag") {
+        clone.tagger.date.offset = i;
+      }
+      if (hash !== hashAs(type, clone)) continue;
+      // Apply the changes and return.
+      value.message = clone.message;
+      if (type === "commit") {
+        value.author.date.offset = clone.author.date.offset;
+        value.committer.date.offset = clone.committer.date.offset;
+      }
+      else if (type === "tag") {
+        value.tagger.date.offset = clone.tagger.date.offset;
+      }
+      return true;
+    }
+    clone.message += "\n";
+  }
+  return false;
+}
+
+function mapTreeEntry(entry) {
+  if (!entry.mode) throw new TypeError("Invalid entry");
+  var mode = modeToString(entry.mode);
+  var item = {
+    path: entry.path,
+    mode: mode,
+    type: modeToType[mode]
+  };
+  // Magic hash for empty file since github rejects empty contents.
+  if (entry.content === "") entry.hash = emptyBlob;
+
+  if (entry.hash) item.sha = entry.hash;
+  else item.content = entry.content;
+  return  item;
+}
+
+function encodeCommit(commit) {
+  var out = {};
+  out.message = commit.message;
+  out.tree = commit.tree;
+  if (commit.parents) out.parents = commit.parents;
+  else if (commit.parent) out.parents = [commit.parent];
+  else commit.parents = [];
+  if (commit.author) out.author = encodePerson(commit.author);
+  if (commit.committer) out.committer = encodePerson(commit.committer);
+  return out;
+}
+
+function encodeTag(tag) {
+  return {
+    tag: tag.tag,
+    message: tag.message,
+    object: tag.object,
+    tagger: encodePerson(tag.tagger)
+  };
+}
+
+function encodePerson(person) {
+  return {
+    name: person.name,
+    email: person.email,
+    date: encodeDate(person.date)
+  };
+}
+
+function encodeTree(tree) {
+  return {
+    tree: Object.keys(tree).map(function (name) {
+      var entry = tree[name];
+      var mode = modeToString(entry.mode);
+      return {
+        path: name,
+        mode: mode,
+        type: modeToType[mode],
+        sha: entry.hash
+      };
+    })
+  };
+}
+
+function encodeBlob(blob) {
+  if (typeof blob === "string") return {
+    content: bodec.encodeUtf8(blob),
+    encoding: "utf-8"
+  };
+  if (bodec.isBinary(blob)) return {
+    content: bodec.toBase64(blob),
+    encoding: "base64"
+  };
+  throw new TypeError("Invalid blob type, must be binary or string");
+}
+
+function modeToString(mode) {
+  var string = mode.toString(8);
+  // Github likes all modes to be 6 chars long
+  if (string.length === 5) string = "0" + string;
+  return string;
+}
+
+function decodeCommit(result) {
+  return {
+    tree: result.tree.sha,
+    parents: result.parents.map(function (object) {
+      return object.sha;
+    }),
+    author: pickPerson(result.author),
+    committer: pickPerson(result.committer),
+    message: result.message
+  };
+}
+
+function decodeTag(result) {
+  return {
+    object: result.object.sha,
+    type: result.object.type,
+    tag: result.tag,
+    tagger: pickPerson(result.tagger),
+    message: result.message
+  };
+}
+
+function decodeTree(result) {
+  var tree = {};
+  result.tree.forEach(function (entry) {
+    tree[entry.path] = {
+      mode: parseInt(entry.mode, 8),
+      hash: entry.sha
+    };
+  });
+  return tree;
+}
+
+function decodeBlob(result) {
+  if (result.encoding === 'base64') {
+    return bodec.fromBase64(result.content.replace(/\n/g, ''));
+  }
+  if (result.encoding === 'utf-8') {
+    return bodec.fromUtf8(result.content);
+  }
+  throw new Error("Unknown blob encoding: " + result.encoding);
+}
+
+function pickPerson(person) {
+  return {
+    name: person.name,
+    email: person.email,
+    date: parseDate(person.date)
+  };
+}
+
+function parseDate(string) {
+  // TODO: test this once GitHub adds timezone information
+  var match = string.match(/(-?)([0-9]{2}):([0-9]{2})$/);
+  var date = new Date(string);
+  var timezoneOffset = 0;
+  if (match) {
+    timezoneOffset = (match[1] === "-" ? 1 : -1) * (
+      parseInt(match[2], 10) * 60 + parseInt(match[3], 10)
+    );
+  }
+  return {
+    seconds: date.valueOf() / 1000,
+    offset: timezoneOffset
+  };
+}
+
+function encodeDate(date) {
+  var seconds = date.seconds - (date.offset) * 60;
+  var d = new Date(seconds * 1000);
+  var string = d.toISOString();
+  var hours = (date.offset / 60)|0;
+  var minutes = date.offset % 60;
+  string = string.substring(0, string.lastIndexOf(".")) +
+    (date.offset > 0 ? "-" : "+") +
+    twoDigit(hours) + ":" + twoDigit(minutes);
+  return string;
+}
+
+// Run some quick unit tests to make sure date encoding works.
+[
+  { offset: 300, seconds: 1401938626 },
+  { offset: 400, seconds: 1401938626 }
+].forEach(function (date) {
+  var verify = parseDate(encodeDate(date));
+  if (verify.seconds !== date.seconds || verify.offset !== date.offset) {
+    throw new Error("Verification failure testing date encoding");
+  }
+});
+
+function twoDigit(num) {
+  if (num < 10) return "0" + num;
+  return "" + num;
+}
+
+function singleCall(callback) {
+  var done = false;
+  return function () {
+    if (done) return console.warn("Discarding extra callback");
+    done = true;
+    return callback.apply(this, arguments);
+  };
+}
+
+function hashAs(type, body) {
+  var buffer = frame({type: type, body: body});
+  return sha1(buffer);
+}
+
+},{"../lib/xhr":40,"bodec":42,"git-sha1":43,"js-git/lib/modes":44,"js-git/lib/object-codec":45}],42:[function(require,module,exports){
+arguments[4][21][0].apply(exports,arguments)
+},{"_process":2,"dup":21}],43:[function(require,module,exports){
+arguments[4][23][0].apply(exports,arguments)
+},{"_process":2,"dup":23}],44:[function(require,module,exports){
+arguments[4][8][0].apply(exports,arguments)
+},{"dup":8}],45:[function(require,module,exports){
+arguments[4][9][0].apply(exports,arguments)
+},{"./modes":44,"bodec":42,"dup":9}]},{},[1])(1)
 });

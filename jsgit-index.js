@@ -33,6 +33,20 @@ mixins.readCombiner = require('js-git/mixins/read-combiner');
 // This makes the object interface less strict.  See it's docs for details
 mixins.formats = require('js-git/mixins/formats');
 
+// Sync local with remote repository
+mixins.sync = require('js-git/mixins/sync');
+
+// Use local as cache for remote repository
+mixins.fallthrough = require('js-git/mixins/fall-through');
+
+// use github as database
+mixins.github = require('js-github/mixins/github-db');
+
+// use IndexedDB as database
+mixins.indexed = require('js-git/mixins/indexed-db');
+
+// Cache everything except blobs over 100 bytes in memory.
+mixins.memCache = require('js-git/mixins/mem-cache');
 
 function popCallbackFromArgs(args) {
   var maybeCallback = args[args.length-1];
@@ -66,6 +80,10 @@ function createRepo() {
   mixins.walkers(repo);
   mixins.readCombiner(repo);
   mixins.formats(repo);
+  return promisify(repo);
+}
+
+function promisify(repo) {
   Object.keys(repo).forEach(name => {
     if (typeof repo[name] === "function") makePromise(repo, name);
   });
@@ -85,10 +103,11 @@ function createRepo() {
       return walk;
     });
   }
-  return repo;
 }
 
 module.exports = {
   modes: modes,
+  mixins: mixins,
+  promisify: promisify,
   createRepo: createRepo
 }
