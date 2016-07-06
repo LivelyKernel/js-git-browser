@@ -1,5 +1,9 @@
 {
   "name": "js-git-browser",
+  "version": "0.0.1",
+  "description": "A browserify build of js-git that uses promises by default",
+  "author": "Christopher Schuster <cs@livoris.net>",
+  "license": "MIT",
   "main": "jsgit.js",
   "systemjs": {
     "main": "./jsgit.js",
