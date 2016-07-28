@@ -1545,7 +1545,8 @@ function mixin(repo) {
   var objects = {};
   var refs = {};
 
-  repo.mem = {objects: objects, refs: refs};
+  repo.getMem = () => ({objects: objects, refs: refs});
+  repo.setMem = me => { objects = me.objects; refs = me.refs; };
   repo.saveAs = saveAs;
   repo.loadAs = loadAs;
   repo.saveRaw = saveRaw;
