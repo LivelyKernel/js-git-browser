@@ -109,5 +109,7 @@ module.exports = {
   modes: modes,
   mixins: mixins,
   promisify: promisify,
-  createRepo: createRepo
+  createRepo: createRepo,
+  codec: require('js-git/lib/object-codec.js'),
+  bodec:  require('bodec')
 }
