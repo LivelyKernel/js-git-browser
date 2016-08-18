@@ -111,5 +111,7 @@ module.exports = {
   promisify: promisify,
   createRepo: createRepo,
   codec: require('js-git/lib/object-codec.js'),
-  bodec:  require('bodec')
+  bodec:  require('bodec'),
+  gitHubRequest: require('js-github/lib/xhr.js'),
+  inflate: require('js-git/lib/inflate.js')
 }

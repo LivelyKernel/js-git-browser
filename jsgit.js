@@ -112,10 +112,12 @@ module.exports = {
   promisify: promisify,
   createRepo: createRepo,
   codec: require('js-git/lib/object-codec.js'),
-  bodec:  require('bodec')
+  bodec:  require('bodec'),
+  gitHubRequest: require('js-github/lib/xhr.js'),
+  inflate: require('js-git/lib/inflate.js')
 }
 
-},{"bodec":2,"js-git/lib/modes":9,"js-git/lib/object-codec.js":10,"js-git/mixins/create-tree":12,"js-git/mixins/fall-through":13,"js-git/mixins/formats":14,"js-git/mixins/indexed-db":15,"js-git/mixins/mem-cache":16,"js-git/mixins/mem-db":17,"js-git/mixins/pack-ops":18,"js-git/mixins/read-combiner":19,"js-git/mixins/sync":20,"js-git/mixins/walkers":21,"js-github/mixins/github-db":42}],2:[function(require,module,exports){
+},{"bodec":2,"js-git/lib/inflate.js":9,"js-git/lib/modes":10,"js-git/lib/object-codec.js":11,"js-git/mixins/create-tree":13,"js-git/mixins/fall-through":14,"js-git/mixins/formats":15,"js-git/mixins/indexed-db":16,"js-git/mixins/mem-cache":17,"js-git/mixins/mem-db":18,"js-git/mixins/pack-ops":19,"js-git/mixins/read-combiner":20,"js-git/mixins/sync":21,"js-git/mixins/walkers":22,"js-github/lib/xhr.js":41,"js-github/mixins/github-db":42}],2:[function(require,module,exports){
 "use strict";
 
 // This file must be served with UTF-8 encoding for the utf8 codec to work.
@@ -496,6 +498,190 @@ process.chdir = function (dir) {
 process.umask = function() { return 0; };
 
 },{}],4:[function(require,module,exports){
+(function (process){
+"use strict";
+
+var isNode = typeof process === 'object' &&
+             typeof process.versions === 'object' &&
+             process.versions.node &&
+             process.__atom_type !== "renderer";
+
+var shared, create, crypto;
+if (isNode) {
+  var nodeRequire = require; // Prevent mine.js from seeing this require
+  crypto = nodeRequire('crypto');
+  create = createNode;
+}
+else {
+  shared = new Uint32Array(80);
+  create = createJs;
+}
+
+
+// Input chunks must be either arrays of bytes or "raw" encoded strings
+module.exports = function sha1(buffer) {
+  if (buffer === undefined) return create(false);
+  var shasum = create(true);
+  shasum.update(buffer);
+  return shasum.digest();
+};
+
+// Use node's openssl bindings when available
+function createNode() {
+  var shasum = crypto.createHash('sha1');
+  return {
+    update: function (buffer) {
+      return shasum.update(buffer);
+    },
+    digest: function () {
+      return shasum.digest('hex');
+    }
+  };
+}
+
+// A pure JS implementation of sha1 for non-node environments.
+function createJs(sync) {
+  var h0 = 0x67452301;
+  var h1 = 0xEFCDAB89;
+  var h2 = 0x98BADCFE;
+  var h3 = 0x10325476;
+  var h4 = 0xC3D2E1F0;
+  // The first 64 bytes (16 words) is the data chunk
+  var block, offset = 0, shift = 24;
+  var totalLength = 0;
+  if (sync) block = shared;
+  else block = new Uint32Array(80);
+
+  return { update: update, digest: digest };
+
+  // The user gave us more data.  Store it!
+  function update(chunk) {
+    if (typeof chunk === "string") return updateString(chunk);
+    var length = chunk.length;
+    totalLength += length * 8;
+    for (var i = 0; i < length; i++) {
+      write(chunk[i]);
+    }
+  }
+
+  function updateString(string) {
+    var length = string.length;
+    totalLength += length * 8;
+    for (var i = 0; i < length; i++) {
+      write(string.charCodeAt(i));
+    }
+  }
+
+
+  function write(byte) {
+    block[offset] |= (byte & 0xff) << shift;
+    if (shift) {
+      shift -= 8;
+    }
+    else {
+      offset++;
+      shift = 24;
+    }
+    if (offset === 16) processBlock();
+  }
+
+  // No more data will come, pad the block, process and return the result.
+  function digest() {
+    // Pad
+    write(0x80);
+    if (offset > 14 || (offset === 14 && shift < 24)) {
+      processBlock();
+    }
+    offset = 14;
+    shift = 24;
+
+    // 64-bit length big-endian
+    write(0x00); // numbers this big aren't accurate in javascript anyway
+    write(0x00); // ..So just hard-code to zero.
+    write(totalLength > 0xffffffffff ? totalLength / 0x10000000000 : 0x00);
+    write(totalLength > 0xffffffff ? totalLength / 0x100000000 : 0x00);
+    for (var s = 24; s >= 0; s -= 8) {
+      write(totalLength >> s);
+    }
+
+    // At this point one last processBlock() should trigger and we can pull out the result.
+    return toHex(h0) +
+           toHex(h1) +
+           toHex(h2) +
+           toHex(h3) +
+           toHex(h4);
+  }
+
+  // We have a full block to process.  Let's do it!
+  function processBlock() {
+    // Extend the sixteen 32-bit words into eighty 32-bit words:
+    for (var i = 16; i < 80; i++) {
+      var w = block[i - 3] ^ block[i - 8] ^ block[i - 14] ^ block[i - 16];
+      block[i] = (w << 1) | (w >>> 31);
+    }
+
+    // log(block);
+
+    // Initialize hash value for this chunk:
+    var a = h0;
+    var b = h1;
+    var c = h2;
+    var d = h3;
+    var e = h4;
+    var f, k;
+
+    // Main loop:
+    for (i = 0; i < 80; i++) {
+      if (i < 20) {
+        f = d ^ (b & (c ^ d));
+        k = 0x5A827999;
+      }
+      else if (i < 40) {
+        f = b ^ c ^ d;
+        k = 0x6ED9EBA1;
+      }
+      else if (i < 60) {
+        f = (b & c) | (d & (b | c));
+        k = 0x8F1BBCDC;
+      }
+      else {
+        f = b ^ c ^ d;
+        k = 0xCA62C1D6;
+      }
+      var temp = (a << 5 | a >>> 27) + f + e + k + (block[i]|0);
+      e = d;
+      d = c;
+      c = (b << 30 | b >>> 2);
+      b = a;
+      a = temp;
+    }
+
+    // Add this chunk's hash to result so far:
+    h0 = (h0 + a) | 0;
+    h1 = (h1 + b) | 0;
+    h2 = (h2 + c) | 0;
+    h3 = (h3 + d) | 0;
+    h4 = (h4 + e) | 0;
+
+    // The block is now reusable.
+    offset = 0;
+    for (i = 0; i < 16; i++) {
+      block[i] = 0;
+    }
+  }
+
+  function toHex(word) {
+    var hex = "";
+    for (var i = 28; i >= 0; i -= 4) {
+      hex += ((word >> i) & 0xf).toString(16);
+    }
+    return hex;
+  }
+
+}
+
+}).call(this,require('_process'))
+},{"_process":3}],5:[function(require,module,exports){
 var bodec = require('bodec');
 
 module.exports = applyDelta;
@@ -558,7 +744,7 @@ function applyDelta(delta, base) {
   }
 }
 
-},{"bodec":22}],5:[function(require,module,exports){
+},{"bodec":23}],6:[function(require,module,exports){
 (function (process){
 "use strict";
 
@@ -595,7 +781,7 @@ function handleMessage(event) {
 }
 
 }).call(this,require('_process'))
-},{"_process":3}],6:[function(require,module,exports){
+},{"_process":3}],7:[function(require,module,exports){
 var pako = require('pako');
 var Binary = require('bodec').Binary;
 if (Binary === Uint8Array) {
@@ -607,7 +793,7 @@ else {
   };
 }
 
-},{"bodec":22,"pako":25}],7:[function(require,module,exports){
+},{"bodec":23,"pako":25}],8:[function(require,module,exports){
 var Inflate = require('pako').Inflate;
 var Binary = require('bodec').Binary;
 
@@ -645,7 +831,7 @@ module.exports = function inflateStream() {
   }
 };
 
-},{"bodec":22,"pako":25}],8:[function(require,module,exports){
+},{"bodec":23,"pako":25}],9:[function(require,module,exports){
 var pako = require('pako');
 var Binary = require('bodec').Binary;
 if (Binary === Uint8Array) {
@@ -657,7 +843,7 @@ else {
   };
 }
 
-},{"bodec":22,"pako":25}],9:[function(require,module,exports){
+},{"bodec":23,"pako":25}],10:[function(require,module,exports){
 // Not strict mode because it uses octal literals all over.
 module.exports = {
   isBlob: function (mode) {
@@ -680,7 +866,7 @@ module.exports = {
   commit: 0160000
 };
 
-},{}],10:[function(require,module,exports){
+},{}],11:[function(require,module,exports){
 "use strict";
 var bodec = require('bodec');
 var modes = require('./modes');
@@ -947,7 +1133,7 @@ function parseDec(buffer, start, end) {
   return val;
 }
 
-},{"./modes":9,"bodec":22}],11:[function(require,module,exports){
+},{"./modes":10,"bodec":23}],12:[function(require,module,exports){
 var inflateStream = require('./inflate-stream.js');
 var inflate = require('./inflate.js');
 var deflate = require('./deflate.js');
@@ -1275,7 +1461,7 @@ function packFrame(item) {
   return bodec.join(parts);
 }
 
-},{"./deflate.js":6,"./inflate-stream.js":7,"./inflate.js":8,"bodec":22,"git-sha1":24}],12:[function(require,module,exports){
+},{"./deflate.js":7,"./inflate-stream.js":8,"./inflate.js":9,"bodec":23,"git-sha1":4}],13:[function(require,module,exports){
 "use strict";
 
 var modes = require('../lib/modes.js');
@@ -1425,7 +1611,7 @@ function singleCall(callback) {
   };
 }
 
-},{"../lib/modes.js":9}],13:[function(require,module,exports){
+},{"../lib/modes.js":10}],14:[function(require,module,exports){
 var modes = require('../lib/modes');
 
 module.exports = function (local, remote) {
@@ -1453,7 +1639,7 @@ module.exports = function (local, remote) {
 
 };
 
-},{"../lib/modes":9}],14:[function(require,module,exports){
+},{"../lib/modes":10}],15:[function(require,module,exports){
 "use strict";
 
 var bodec = require('bodec');
@@ -1588,7 +1774,7 @@ function normalizePerson(person) {
   };
 }
 
-},{"../lib/object-codec":10,"bodec":22}],15:[function(require,module,exports){
+},{"../lib/object-codec":11,"bodec":23}],16:[function(require,module,exports){
 "use strict";
 /*global indexedDB*/
 
@@ -1738,7 +1924,7 @@ function updateRef(ref, hash, callback) {
   };
 }
 
-},{"../lib/modes.js":9,"../lib/object-codec.js":10,"git-sha1":24}],16:[function(require,module,exports){
+},{"../lib/modes.js":10,"../lib/object-codec.js":11,"git-sha1":4}],17:[function(require,module,exports){
 "use strict";
 
 var encoders = require('../lib/object-codec').encoders;
@@ -1793,7 +1979,7 @@ function deepFreeze(obj) {
   });
 }
 
-},{"../lib/object-codec":10,"bodec":22}],17:[function(require,module,exports){
+},{"../lib/object-codec":11,"bodec":23}],18:[function(require,module,exports){
 "use strict";
 
 var defer = require('../lib/defer.js');
@@ -1890,7 +2076,7 @@ function makeAsync(fn, callback) {
   });
 }
 
-},{"../lib/defer.js":5,"../lib/object-codec.js":10,"git-sha1":24}],18:[function(require,module,exports){
+},{"../lib/defer.js":6,"../lib/object-codec.js":11,"git-sha1":4}],19:[function(require,module,exports){
 "use strict";
 
 var sha1 = require('git-sha1');
@@ -2093,7 +2279,7 @@ function applyParser(stream, parser, onError) {
   return { take: extra.take };
 }
 
-},{"../lib/apply-delta.js":4,"../lib/object-codec.js":10,"../lib/pack-codec.js":11,"culvert":23,"git-sha1":24}],19:[function(require,module,exports){
+},{"../lib/apply-delta.js":5,"../lib/object-codec.js":11,"../lib/pack-codec.js":12,"culvert":24,"git-sha1":4}],20:[function(require,module,exports){
 "use strict";
 
 // This replaces loadAs with a version that batches concurrent requests for
@@ -2123,7 +2309,7 @@ module.exports = function (repo) {
   }
 };
 
-},{}],20:[function(require,module,exports){
+},{}],21:[function(require,module,exports){
 "use strict";
 
 var modes = require('../lib/modes');
@@ -2272,7 +2458,7 @@ function sync(local, remote, ref, depth, callback) {
   }
 }
 
-},{"../lib/modes":9}],21:[function(require,module,exports){
+},{"../lib/modes":10}],22:[function(require,module,exports){
 var modes = require('../lib/modes.js');
 
 module.exports = function (repo) {
@@ -2426,7 +2612,7 @@ function walk(seed, scan, loadKey, compare) {
   }
 }
 
-},{"../lib/modes.js":9}],22:[function(require,module,exports){
+},{"../lib/modes.js":10}],23:[function(require,module,exports){
 (function (process){
 "use strict";
 /*global escape, unescape*/
@@ -2676,7 +2862,7 @@ function fromArray(array, binary, offset) {
 }
 
 }).call(this,require('_process'))
-},{"_process":3}],23:[function(require,module,exports){
+},{"_process":3}],24:[function(require,module,exports){
 "use strict";
 
 module.exports = makeChannel;
@@ -2745,191 +2931,7 @@ function log(name) {
   };
 }
 
-},{}],24:[function(require,module,exports){
-(function (process){
-"use strict";
-
-var isNode = typeof process === 'object' &&
-             typeof process.versions === 'object' &&
-             process.versions.node &&
-             process.__atom_type !== "renderer";
-
-var shared, create, crypto;
-if (isNode) {
-  var nodeRequire = require; // Prevent mine.js from seeing this require
-  crypto = nodeRequire('crypto');
-  create = createNode;
-}
-else {
-  shared = new Uint32Array(80);
-  create = createJs;
-}
-
-
-// Input chunks must be either arrays of bytes or "raw" encoded strings
-module.exports = function sha1(buffer) {
-  if (buffer === undefined) return create(false);
-  var shasum = create(true);
-  shasum.update(buffer);
-  return shasum.digest();
-};
-
-// Use node's openssl bindings when available
-function createNode() {
-  var shasum = crypto.createHash('sha1');
-  return {
-    update: function (buffer) {
-      return shasum.update(buffer);
-    },
-    digest: function () {
-      return shasum.digest('hex');
-    }
-  };
-}
-
-// A pure JS implementation of sha1 for non-node environments.
-function createJs(sync) {
-  var h0 = 0x67452301;
-  var h1 = 0xEFCDAB89;
-  var h2 = 0x98BADCFE;
-  var h3 = 0x10325476;
-  var h4 = 0xC3D2E1F0;
-  // The first 64 bytes (16 words) is the data chunk
-  var block, offset = 0, shift = 24;
-  var totalLength = 0;
-  if (sync) block = shared;
-  else block = new Uint32Array(80);
-
-  return { update: update, digest: digest };
-
-  // The user gave us more data.  Store it!
-  function update(chunk) {
-    if (typeof chunk === "string") return updateString(chunk);
-    var length = chunk.length;
-    totalLength += length * 8;
-    for (var i = 0; i < length; i++) {
-      write(chunk[i]);
-    }
-  }
-
-  function updateString(string) {
-    var length = string.length;
-    totalLength += length * 8;
-    for (var i = 0; i < length; i++) {
-      write(string.charCodeAt(i));
-    }
-  }
-
-
-  function write(byte) {
-    block[offset] |= (byte & 0xff) << shift;
-    if (shift) {
-      shift -= 8;
-    }
-    else {
-      offset++;
-      shift = 24;
-    }
-    if (offset === 16) processBlock();
-  }
-
-  // No more data will come, pad the block, process and return the result.
-  function digest() {
-    // Pad
-    write(0x80);
-    if (offset > 14 || (offset === 14 && shift < 24)) {
-      processBlock();
-    }
-    offset = 14;
-    shift = 24;
-
-    // 64-bit length big-endian
-    write(0x00); // numbers this big aren't accurate in javascript anyway
-    write(0x00); // ..So just hard-code to zero.
-    write(totalLength > 0xffffffffff ? totalLength / 0x10000000000 : 0x00);
-    write(totalLength > 0xffffffff ? totalLength / 0x100000000 : 0x00);
-    for (var s = 24; s >= 0; s -= 8) {
-      write(totalLength >> s);
-    }
-
-    // At this point one last processBlock() should trigger and we can pull out the result.
-    return toHex(h0) +
-           toHex(h1) +
-           toHex(h2) +
-           toHex(h3) +
-           toHex(h4);
-  }
-
-  // We have a full block to process.  Let's do it!
-  function processBlock() {
-    // Extend the sixteen 32-bit words into eighty 32-bit words:
-    for (var i = 16; i < 80; i++) {
-      var w = block[i - 3] ^ block[i - 8] ^ block[i - 14] ^ block[i - 16];
-      block[i] = (w << 1) | (w >>> 31);
-    }
-
-    // log(block);
-
-    // Initialize hash value for this chunk:
-    var a = h0;
-    var b = h1;
-    var c = h2;
-    var d = h3;
-    var e = h4;
-    var f, k;
-
-    // Main loop:
-    for (i = 0; i < 80; i++) {
-      if (i < 20) {
-        f = d ^ (b & (c ^ d));
-        k = 0x5A827999;
-      }
-      else if (i < 40) {
-        f = b ^ c ^ d;
-        k = 0x6ED9EBA1;
-      }
-      else if (i < 60) {
-        f = (b & c) | (d & (b | c));
-        k = 0x8F1BBCDC;
-      }
-      else {
-        f = b ^ c ^ d;
-        k = 0xCA62C1D6;
-      }
-      var temp = (a << 5 | a >>> 27) + f + e + k + (block[i]|0);
-      e = d;
-      d = c;
-      c = (b << 30 | b >>> 2);
-      b = a;
-      a = temp;
-    }
-
-    // Add this chunk's hash to result so far:
-    h0 = (h0 + a) | 0;
-    h1 = (h1 + b) | 0;
-    h2 = (h2 + c) | 0;
-    h3 = (h3 + d) | 0;
-    h4 = (h4 + e) | 0;
-
-    // The block is now reusable.
-    offset = 0;
-    for (i = 0; i < 16; i++) {
-      block[i] = 0;
-    }
-  }
-
-  function toHex(word) {
-    var hex = "";
-    for (var i = 28; i >= 0; i -= 4) {
-      hex += ((word >> i) & 0xf).toString(16);
-    }
-    return hex;
-  }
-
-}
-
-}).call(this,require('_process'))
-},{"_process":3}],25:[function(require,module,exports){
+},{}],25:[function(require,module,exports){
 // Top level file is just a mixin of submodules & constants
 'use strict';
 
@@ -10146,9 +10148,9 @@ function hashAs(type, body) {
   return sha1(buffer);
 }
 
-},{"../lib/xhr":41,"bodec":43,"git-sha1":44,"js-git/lib/modes":9,"js-git/lib/object-codec":10}],43:[function(require,module,exports){
-arguments[4][22][0].apply(exports,arguments)
-},{"_process":3,"dup":22}],44:[function(require,module,exports){
-arguments[4][24][0].apply(exports,arguments)
-},{"_process":3,"dup":24}]},{},[1])(1)
+},{"../lib/xhr":41,"bodec":43,"git-sha1":44,"js-git/lib/modes":10,"js-git/lib/object-codec":11}],43:[function(require,module,exports){
+arguments[4][23][0].apply(exports,arguments)
+},{"_process":3,"dup":23}],44:[function(require,module,exports){
+arguments[4][4][0].apply(exports,arguments)
+},{"_process":3,"dup":4}]},{},[1])(1)
 });
