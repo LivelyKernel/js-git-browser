@@ -4,6 +4,6 @@ var b = browserify(
   ["jsgit-index.js"],
   {standalone: "jsgit"}
 ).bundle((err, buf) => {
-  let rewritten = String(buf).replace(/(repo.refPrefix = prefix;)/, "$1\n  repo.loadRaw = loadRaw;");
+  let rewritten = String(buf).replace(/(repo.refPrefix = prefix;)/, "$1\n  repo.loadRaw = loadRaw;\n  repo.db = db;");
   fs.writeFileSync("jsgit.js", rewritten);
 })

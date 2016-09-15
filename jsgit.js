@@ -1828,6 +1828,7 @@ function mixin(repo, prefix) {
   if (!prefix) throw new Error("Prefix required");
   repo.refPrefix = prefix;
   repo.loadRaw = loadRaw;
+  repo.db = db;
   repo.saveAs = saveAs;
   repo.loadAs = loadAs;
   repo.readRef = readRef;
